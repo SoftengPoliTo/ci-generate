@@ -52,7 +52,10 @@ impl<'a> Cargo<'a> {
         }
     }
     /// Sets a description
-    pub fn docker_image_description(mut self, docker_image_description: impl Into<Cow<'a, str>>) -> Self {
+    pub fn docker_image_description(
+        mut self,
+        docker_image_description: impl Into<Cow<'a, str>>,
+    ) -> Self {
         self.docker_image_description = docker_image_description.into();
         self
     }

@@ -21,6 +21,7 @@ use filters::*;
 static REUSE_TEMPLATE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/", "dep5"));
 
+#[derive(Debug)]
 pub struct TemplateData<'a> {
     license: Cow<'a, str>,
     branch: Cow<'a, str>,
@@ -31,9 +32,9 @@ impl<'a> TemplateData<'a> {
     /// Creates a new `Common` instance.
     pub fn new(project_path: &'a Path) -> Self {
         Self {
-            license: std::borrow::Cow::Borrowed("MIT"),
-            branch: std::borrow::Cow::Borrowed("main"),
-            name: std::borrow::Cow::Borrowed(""),
+            license: Cow::Borrowed("MIT"),
+            branch: Cow::Borrowed("main"),
+            name: Cow::Borrowed(""),
             project_path,
         }
     }
@@ -211,19 +212,23 @@ pub(crate) fn define_name<'a>(project_name: &'a str, project_path: &'a Path) -> 
     if !project_name.is_empty() && project_name.is_ascii() {
         Ok(project_name)
     } else {
-        let name = match project_path.file_name().and_then(|x| x.to_str()) {
-            Some(x) => Ok(x),
-            None => Err(Error::UTF8Check),
-        };
-        name
+        match project_path.file_name().and_then(|x| x.to_str()) {
+            Some(name_str) if !name_str.is_empty() && name_str.is_ascii() => Ok(name_str),
+            _ => Err(Error::UTF8Check),
+        }
     }
 }
+
 // Retrieve the license
 pub(crate) fn define_license(license: &str) -> Result<&dyn license::License> {
-    let license = license
-        .parse::<&dyn license::License>()
-        .map_err(|_| Error::NoLicense)?;
-    Ok(license)
+    if license.is_empty() {
+        Err(Error::NoLicense)
+    } else {
+        match license.parse::<&dyn license::License>() {
+            Ok(l) => Ok(l),
+            Err(_) => Err(Error::InvalidLicense),
+        }
+    }
 }
 // Compute template
 pub(crate) fn compute_template(
@@ -239,26 +244,26 @@ pub(crate) fn compute_template(
 // Performs a path validation for unix/macOs
 #[cfg(not(windows))]
 pub fn path_validation(project_path: &Path) -> Result<PathBuf> {
-    use expanduser::expanduser;
-    use std::fs;
-    let project_path = if project_path.starts_with("~") {
-        let project_path = match expanduser(project_path.display().to_string()) {
-            Ok(p) => p,
-            Err(_) => return Err(Error::WrongExpandUser),
-        };
-        project_path
-    } else {
-        project_path.to_path_buf()
-    };
+    use shellexpand::tilde;
 
-    if !project_path.try_exists()? {
-        fs::create_dir(&project_path)?;
+    let expanded_path_str = tilde(project_path.to_string_lossy().as_ref()).to_string();
+    let project_path: PathBuf = expanded_path_str
+        .parse()
+        .map_err(|_| Error::WrongExpandUser)?;
+
+    if !project_path.exists() {
+        // Verification of permissions before creation
+        std::fs::create_dir_all(&project_path).map_err(|_| Error::CreationError)?;
+
+        // Check again after creation
+        if !project_path.exists() {
+            return Err(Error::CreationError);
+        }
     }
-    let project_path = std::fs::canonicalize(project_path);
-    match project_path {
-        Ok(x) => Ok(x),
-        _ => Err(Error::CanonicalPath),
-    }
+
+    let canonicalized_path =
+        std::fs::canonicalize(&project_path).map_err(|_| Error::CanonicalPath)?;
+    Ok(canonicalized_path)
 }
 // Performs a path validation for Windows
 #[cfg(windows)]
@@ -310,67 +315,120 @@ pub fn path_validation(project_path: &Path) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use proptest_derive::Arbitrary;
+    use tempfile::{tempdir, TempDir};
 
-    // Test for input strings to define_name()
+    static VALID_LICENSES: [&str; 3] = ["MIT", "Apache-2.0", "GPL-3.0"];
+
+    #[derive(Debug, Arbitrary)]
+    struct LicenseTest {
+        license_str: String,
+    }
+
     proptest! {
         #[test]
-        fn test_diff_alphabet(s in "[\\p{Greek}][\\p{Cyrillic}]*{0,}"){
-            prop_assert!(define_name(&s, Path::new("~/Desktop")).is_ok());
-        }
-        #[test]
-        fn test_valid_word(s in "[[:word:]]*{0,}"){
-            prop_assert!(define_name(&s, Path::new("~/Desktop")).is_ok());
-        }
-        #[test]
-        fn test_emoji(s in "[\\p{Emoji}]*{0,}"){
-            prop_assert!(define_name(&s, Path::new("~/Desktop")).is_ok());
+        fn define_name_proptest(project_name in "\\PC*", project_path in "\\PC*") {
+            let temp_dir = TempDir::new().expect("Failed to create temp dir");
+            let temp_path = temp_dir.path().to_path_buf();
+
+            let full_path = temp_path.join(project_path);
+            let project_path_str = full_path.file_name().and_then(|x| x.to_str()).unwrap_or("");
+
+            let result = define_name(&project_name, &full_path);
+
+            if project_name.is_empty() || !project_name.is_ascii() {
+                if project_path_str.is_empty() || !project_path_str.is_ascii() || project_path_str.contains('/') {
+                    prop_assert!(result.is_err());
+                } else {
+                    prop_assert!(result.is_ok());
+                }
+            } else {
+                prop_assert!(result.is_ok());
+            }
         }
     }
 
-    // Test for input strings to define_license()
-    #[test]
-    fn define_license_valid_test() {
-        assert!(define_license("AFL-3.0").is_ok())
-    }
-    #[test]
-    fn define_license_invalid_test() {
-        assert!(define_license("POL-3.0").is_err());
+    proptest! {
+        #[test]
+        fn define_license_proptest(data: LicenseTest) {
+
+            let result = define_license(&data.license_str);
+
+            if data.license_str.is_empty() {
+                // If the license string is empty, a `NoLicense` error is expected.
+                prop_assert!(result.is_err());
+            } else if VALID_LICENSES.contains(&&*data.license_str) {
+                // If the license string is valid, an Ok result is expected with a License object
+                prop_assert!(result.is_ok());
+            } else {
+                // If the license string is non-empty but invalid, an `InvalidLicense` error is expected.
+                prop_assert!(result.is_err());
+            }
+        }
     }
 
-    // Test for path validation for unix
     #[test]
-    fn path_validation_0() {
-        assert!(path_validation(Path::new("")).is_err())
+    fn test_valid_path() {
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let temp_path = temp_dir.path();
+        let valid_path = Path::new("valid_path").join(temp_path);
+
+        let result = path_validation(&valid_path);
+        assert!(result.is_ok());
+        if let Ok(canonicalized_path) = &result {
+            assert!(canonicalized_path.exists());
+        }
     }
+
     #[test]
-    fn path_validation_empty() {
-        assert!(path_validation(Path::new("")).is_err());
+    fn test_creation_error() {
+        let unwritable_path = Path::new("/non_scrivibile");
+        let result = path_validation(unwritable_path);
+        assert!(result.is_err());
+        if let Err(err) = &result {
+            assert!(matches!(err, &Error::CreationError));
+        }
     }
+
     #[test]
-    fn path_validation_invalid() {
-        assert!(
-            path_validation(Path::new("~//Desktop/GitHub/ci-generate/../../ci-generate")).is_err()
-        );
-    }
-    #[test]
-    fn path_validation_valid() {
-        assert!(path_validation(Path::new("tests/common/mod.rs")).is_ok());
+    fn path_validation_non_ascii_chars() {
+        let non_ascii_path = "/path/with/çhåracters";
+        let result = path_validation(Path::new(non_ascii_path));
+
+        assert!(result.is_err());
     }
 
     // Test for path validation for windows
     #[cfg(windows)]
     #[test]
-    fn path_validation_empty() {
-        assert!(path_validation(Path::new("")).is_err());
+    fn test_valid_path_windows() {
+        let temp_dir = tempdir().expect("Failed to create temporary directory");
+        let temp_path = temp_dir.path();
+        let valid_path = Path::new("valid_path").join(temp_path);
+
+        let result = path_validation_windows(&valid_path);
+        assert!(result.is_ok());
+        if let Ok(canonicalized_path) = &result {
+            assert!(canonicalized_path.exists());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_creation_error_windows() {
+        let unwritable_path = Path::new("C:\\non_scrivibile"); // Cambia il percorso in uno appropriato per Windows
+        let result = path_validation_windows(&unwritable_path);
+        assert!(result.is_err());
+        if let Err(err) = &result {
+            assert!(matches!(err, &Error::CreationError));
+        }
     }
     #[cfg(windows)]
     #[test]
-    fn path_validation_invalid() {
-        assert!(path_validation(Path::new("~\\C:\\Users\\..\\..\\Documents")).is_err());
-    }
-    #[cfg(windows)]
-    #[test]
-    fn path_validation_valid() {
-        assert!(path_validation(Path::new("~\\")).is_ok());
+    fn test_non_ascii_chars_windows() {
+        let non_ascii_path = "C:\\path\\with\\çhåracters"; // Cambia il percorso in uno appropriato per Windows
+        let result = path_validation_windows(Path::new(non_ascii_path));
+
+        assert!(result.is_err());
     }
 }

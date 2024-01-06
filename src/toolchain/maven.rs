@@ -44,7 +44,9 @@ impl<'a> CreateProject for Maven<'a> {
 impl<'a> Maven<'a> {
     /// Creates a new `Maven` instance.
     pub fn new() -> Self {
-        Self { group: std::borrow::Cow::Borrowed("group") }
+        Self {
+            group: std::borrow::Cow::Borrowed("group"),
+        }
     }
     /// Sets a group
     pub fn group(mut self, group: impl Into<Cow<'a, str>>) -> Self {
