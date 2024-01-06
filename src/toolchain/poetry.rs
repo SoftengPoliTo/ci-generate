@@ -25,13 +25,13 @@ pub struct Poetry;
 impl CreateProject for Poetry {
     fn create_project(&self, data: TemplateData) -> Result<()> {
         let project_path = path_validation(data.project_path)?;
-        let project_name = define_name(data.name, project_path.as_path())?;
-        let license = define_license(data.license)?;
+        let project_name = define_name(&data.name, project_path.as_path())?;
+        let license = define_license(&data.license)?;
         let template = self.build(
             project_path.as_path(),
             project_name,
             license.id(),
-            data.branch,
+            &data.branch,
         );
         compute_template(template?, license, project_path.as_path())
     }

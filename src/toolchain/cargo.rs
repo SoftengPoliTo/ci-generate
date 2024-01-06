@@ -1,4 +1,5 @@
 use minijinja::value::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ static CARGO_TEMPLATES: &[(&str, &str)] = &builtin_templates!["cargo" =>
 /// A cargo project data.
 #[derive(Default)]
 pub struct Cargo<'a> {
-    docker_image_description: &'a str,
+    docker_image_description: Cow<'a, str>,
     ci: bool,
     lib: bool,
 }
@@ -29,13 +30,13 @@ pub struct Cargo<'a> {
 impl<'a> CreateCi for Cargo<'a> {
     fn create_ci(&self, data: TemplateData) -> Result<()> {
         let project_path = path_validation(data.project_path)?;
-        let project_name = define_name(data.name, project_path.as_path())?;
-        let license = define_license(data.license)?;
+        let project_name = define_name(&data.name, project_path.as_path())?;
+        let license = define_license(&data.license)?;
         let template = self.build(
             project_path.as_path(),
             project_name,
             license.id(),
-            data.branch,
+            &data.branch,
         );
         compute_template(template?, license, project_path.as_path())
     }
@@ -45,14 +46,14 @@ impl<'a> Cargo<'a> {
     /// Creates a new `Cargo` instance.
     pub fn new() -> Self {
         Self {
-            docker_image_description: "default",
+            docker_image_description: std::borrow::Cow::Borrowed("default"),
             lib: false,
             ci: false,
         }
     }
     /// Sets a description
-    pub fn docker_image_description(mut self, docker_image_description: &'a str) -> Self {
-        self.docker_image_description = docker_image_description;
+    pub fn docker_image_description(mut self, docker_image_description: impl Into<Cow<'a, str>>) -> Self {
+        self.docker_image_description = docker_image_description.into();
         self
     }
     /// Sets a library project

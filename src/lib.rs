@@ -10,6 +10,7 @@ mod filters;
 
 use minijinja::value::Value;
 use minijinja::Environment;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::{create_dir_all, write};
 use std::path::{Path, PathBuf};
@@ -21,36 +22,36 @@ static REUSE_TEMPLATE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/", "dep5"));
 
 pub struct TemplateData<'a> {
-    license: &'a str,
-    branch: &'a str,
-    name: &'a str,
+    license: Cow<'a, str>,
+    branch: Cow<'a, str>,
+    name: Cow<'a, str>,
     project_path: &'a Path,
 }
 impl<'a> TemplateData<'a> {
     /// Creates a new `Common` instance.
     pub fn new(project_path: &'a Path) -> Self {
         Self {
-            license: "MIT",
-            branch: "main",
-            name: "",
+            license: std::borrow::Cow::Borrowed("MIT"),
+            branch: std::borrow::Cow::Borrowed("main"),
+            name: std::borrow::Cow::Borrowed(""),
             project_path,
         }
     }
     /// Sets a new license.
-    pub fn license(mut self, license: &'a str) -> Self {
-        self.license = license;
+    pub fn license(mut self, license: impl Into<Cow<'a, str>>) -> Self {
+        self.license = license.into();
         self
     }
 
     /// Sets a new branch.
-    pub fn branch(mut self, branch: &'a str) -> Self {
-        self.branch = branch;
+    pub fn branch(mut self, branch: impl Into<Cow<'a, str>>) -> Self {
+        self.branch = branch.into();
         self
     }
 
     /// Sets a new project_name.
-    pub fn name(mut self, name: &'a str) -> Self {
-        self.name = name;
+    pub fn name(mut self, name: impl Into<Cow<'a, str>>) -> Self {
+        self.name = name.into();
         self
     }
 }
