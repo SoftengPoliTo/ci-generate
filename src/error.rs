@@ -9,6 +9,9 @@ pub enum Error {
     /// Impossible to canonicalize this path.
     #[error("Canonicalization failure")]
     CanonicalPath,
+    /// Impossible to create this path.
+    #[error("Path creation failure")]
+    CreationError,
     /// Unable to retrieve the home directory.
     #[error("Home directory failure")]
     HomeDir,
@@ -18,6 +21,9 @@ pub enum Error {
     /// License not found.
     #[error("License not found")]
     NoLicense,
+    /// Invalid license
+    #[error("Invalid license")]
+    InvalidLicense,
     /// A more generic I/O error.
     #[error("I/O error")]
     Io(#[from] std::io::Error),

@@ -1,4 +1,5 @@
 use minijinja::value::Value;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,15 +16,13 @@ static CARGO_TEMPLATES: &[(&str, &str)] = &builtin_templates!["cargo" =>
     ("ci.github.docker", "github-docker-application.yml"),
     ("docker.amd64", "Dockerfile-amd64"),
     ("docker.arm64", "Dockerfile-arm64"),
-    ("fuzz.gitignore", ".gitignore-fuzz"),
-    ("fuzz.cargo", "cargo-fuzz.toml"),
-    ("fuzz.target", "fuzz_target_1.rs")
+    ("rs.proptest", "proptest.rs")
 ];
 
 /// A cargo project data.
 #[derive(Default)]
 pub struct Cargo<'a> {
-    docker_image_description: &'a str,
+    docker_image_description: Cow<'a, str>,
     ci: bool,
     lib: bool,
 }
@@ -31,13 +30,13 @@ pub struct Cargo<'a> {
 impl<'a> CreateCi for Cargo<'a> {
     fn create_ci(&self, data: TemplateData) -> Result<()> {
         let project_path = path_validation(data.project_path)?;
-        let project_name = define_name(data.name, project_path.as_path())?;
-        let license = define_license(data.license)?;
+        let project_name = define_name(&data.name, project_path.as_path())?;
+        let license = define_license(&data.license)?;
         let template = self.build(
             project_path.as_path(),
             project_name,
             license.id(),
-            data.branch,
+            &data.branch,
         );
         compute_template(template?, license, project_path.as_path())
     }
@@ -47,14 +46,17 @@ impl<'a> Cargo<'a> {
     /// Creates a new `Cargo` instance.
     pub fn new() -> Self {
         Self {
-            docker_image_description: "default",
+            docker_image_description: std::borrow::Cow::Borrowed("default"),
             lib: false,
             ci: false,
         }
     }
     /// Sets a description
-    pub fn docker_image_description(mut self, docker_image_description: &'a str) -> Self {
-        self.docker_image_description = docker_image_description;
+    pub fn docker_image_description(
+        mut self,
+        docker_image_description: impl Into<Cow<'a, str>>,
+    ) -> Self {
+        self.docker_image_description = docker_image_description.into();
         self
     }
     /// Sets a library project
@@ -75,6 +77,10 @@ impl<'a> Cargo<'a> {
             } else {
                 run_command(path, &["new"])?;
             }
+            run_command(
+                &path.join("Cargo.toml"),
+                &["add", "--dev", "proptest", "--manifest-path"],
+            )?;
         }
         Ok(())
     }
@@ -82,12 +88,11 @@ impl<'a> Cargo<'a> {
     fn project_structure(
         project_path: &Path,
         name: &str,
+        ci: bool,
     ) -> (HashMap<PathBuf, &'static str>, Vec<PathBuf>) {
         let root = project_path.to_path_buf();
         let github = project_path.join(".github/workflows");
         let docker = project_path.join("docker");
-        let fuzz = project_path.join("fuzz");
-        let fuzz_targets = fuzz.join("fuzz_targets");
 
         let mut template_files = HashMap::new();
 
@@ -106,15 +111,14 @@ impl<'a> Cargo<'a> {
         template_files.insert(docker.join("Dockerfile-amd64"), "docker.amd64");
         template_files.insert(docker.join("Dockerfile-arm64"), "docker.arm64");
 
-        // Fuzz
-        template_files.insert(fuzz.join(".gitignore"), "fuzz.gitignore");
-        template_files.insert(fuzz.join("Cargo.toml"), "fuzz.cargo");
-        template_files.insert(fuzz_targets.join("fuzz_target_1.rs"), "fuzz.target");
-
-        (
-            template_files,
-            vec![root, github, docker, fuzz, fuzz_targets],
-        )
+        if !ci {
+            // Proptest
+            let tests = project_path.join("project").join("tests");
+            template_files.insert(tests.join("proptest.rs"), "rs.proptest");
+            (template_files, vec![root, github, docker, tests])
+        } else {
+            (template_files, vec![root, github, docker])
+        }
     }
 }
 
@@ -139,7 +143,7 @@ impl<'a> BuildTemplate for Cargo<'a> {
         fs::remove_dir_all(project_path)?;
         Cargo::project_creation(self, &project_path.join("project"))?;
 
-        let (files, dirs) = Cargo::project_structure(project_path, project_name);
+        let (files, dirs) = Cargo::project_structure(project_path, project_name, self.ci);
 
         Ok(ProjectOutput {
             files,

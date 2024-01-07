@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -23,19 +24,19 @@ const TESTS: &str = "test/java";
 #[derive(Default)]
 /// A maven project.
 pub struct Maven<'a> {
-    group: &'a str,
+    group: Cow<'a, str>,
 }
 
 impl<'a> CreateProject for Maven<'a> {
     fn create_project(&self, data: TemplateData) -> Result<()> {
         let project_path = path_validation(data.project_path)?;
-        let project_name = define_name(data.name, project_path.as_path())?;
-        let license = define_license(data.license)?;
+        let project_name = define_name(&data.name, project_path.as_path())?;
+        let license = define_license(&data.license)?;
         let template = self.build(
             project_path.as_path(),
             project_name,
             license.id(),
-            data.branch,
+            &data.branch,
         );
         compute_template(template?, license, project_path.as_path())
     }
@@ -43,11 +44,13 @@ impl<'a> CreateProject for Maven<'a> {
 impl<'a> Maven<'a> {
     /// Creates a new `Maven` instance.
     pub fn new() -> Self {
-        Self { group: "group" }
+        Self {
+            group: std::borrow::Cow::Borrowed("group"),
+        }
     }
     /// Sets a group
-    pub fn group(mut self, group: &'a str) -> Self {
-        self.group = group;
+    pub fn group(mut self, group: impl Into<Cow<'a, str>>) -> Self {
+        self.group = group.into();
         self
     }
 
@@ -97,7 +100,7 @@ impl<'a> BuildTemplate for Maven<'a> {
         context.insert("group", Value::from_serializable(&self.group));
         context.insert("license_id", Value::from_serializable(&license));
 
-        let (files, dirs) = Maven::project_structure(project_path, self.group, project_name);
+        let (files, dirs) = Maven::project_structure(project_path, &self.group, project_name);
 
         Ok(ProjectOutput {
             files,
