@@ -252,13 +252,7 @@ pub fn path_validation(project_path: &Path) -> Result<PathBuf> {
         .map_err(|_| Error::WrongExpandUser)?;
 
     if !project_path.exists() {
-        // Verification of permissions before creation
         std::fs::create_dir_all(&project_path).map_err(|_| Error::CreationError)?;
-
-        // Check again after creation
-        if !project_path.exists() {
-            return Err(Error::CreationError);
-        }
     }
 
     let canonicalized_path =
